@@ -45,14 +45,11 @@ Parameters:
     Type: Number
     Default: 1
     Description: How many copies of the service task to run
-  Role:
+  IamStackName:
     Type: String
-    Default: ""
-    Description: (Optional) An IAM role to give the service's containers if the code within needs to
-                 access other AWS resources like S3 buckets, DynamoDB tables, etc
+    Default: iamRoles
+    Description: The name of the stack containing the appropriate IAM roles.
 
-Conditions:
-  HasCustomRole: !Not [ !Equals [!Ref 'Role', ''] ]
 Mappings:
   # Hard values for the subnet masks. These masks define
   # the range of internal IP addresses that can be assigned.
@@ -233,68 +230,68 @@ Resources:
   # account on your behalf, such as updating your load balancer with the
   # details of where your containers are, so that traffic can reach your
   # containers.
-  ECSRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Statement:
-        - Effect: Allow
-          Principal:
-            Service: [ecs.amazonaws.com]
-          Action: ['sts:AssumeRole']
-      Path: /
-      Policies:
-      - PolicyName: ecs-service
-        PolicyDocument:
-          Statement:
-          - Effect: Allow
-            Action:
-              # Rules which allow ECS to attach network interfaces to instances
-              # on your behalf in order for awsvpc networking mode to work right
-              - 'ec2:AttachNetworkInterface'
-              - 'ec2:CreateNetworkInterface'
-              - 'ec2:CreateNetworkInterfacePermission'
-              - 'ec2:DeleteNetworkInterface'
-              - 'ec2:DeleteNetworkInterfacePermission'
-              - 'ec2:Describe*'
-              - 'ec2:DetachNetworkInterface'
+  # ECSRole:
+  #   Type: AWS::IAM::Role
+  #   Properties:
+  #     AssumeRolePolicyDocument:
+  #       Statement:
+  #       - Effect: Allow
+  #         Principal:
+  #           Service: [ecs.amazonaws.com]
+  #         Action: ['sts:AssumeRole']
+  #     Path: /
+  #     Policies:
+  #     - PolicyName: ecs-service
+  #       PolicyDocument:
+  #         Statement:
+  #         - Effect: Allow
+  #           Action:
+  #             # Rules which allow ECS to attach network interfaces to instances
+  #             # on your behalf in order for awsvpc networking mode to work right
+  #             - 'ec2:AttachNetworkInterface'
+  #             - 'ec2:CreateNetworkInterface'
+  #             - 'ec2:CreateNetworkInterfacePermission'
+  #             - 'ec2:DeleteNetworkInterface'
+  #             - 'ec2:DeleteNetworkInterfacePermission'
+  #             - 'ec2:Describe*'
+  #             - 'ec2:DetachNetworkInterface'
 
-              # Rules which allow ECS to update load balancers on your behalf
-              # with the information sabout how to send traffic to your containers
-              - 'elasticloadbalancing:DeregisterInstancesFromLoadBalancer'
-              - 'elasticloadbalancing:DeregisterTargets'
-              - 'elasticloadbalancing:Describe*'
-              - 'elasticloadbalancing:RegisterInstancesWithLoadBalancer'
-              - 'elasticloadbalancing:RegisterTargets'
-            Resource: '*'
+  #             # Rules which allow ECS to update load balancers on your behalf
+  #             # with the information sabout how to send traffic to your containers
+  #             - 'elasticloadbalancing:DeregisterInstancesFromLoadBalancer'
+  #             - 'elasticloadbalancing:DeregisterTargets'
+  #             - 'elasticloadbalancing:Describe*'
+  #             - 'elasticloadbalancing:RegisterInstancesWithLoadBalancer'
+  #             - 'elasticloadbalancing:RegisterTargets'
+  #           Resource: '*'
 
   # This is a role which is used by the ECS tasks themselves.
-  ECSTaskExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Statement:
-        - Effect: Allow
-          Principal:
-            Service: [ecs-tasks.amazonaws.com]
-          Action: ['sts:AssumeRole']
-      Path: /
-      Policies:
-        - PolicyName: AmazonECSTaskExecutionRolePolicy
-          PolicyDocument:
-            Statement:
-            - Effect: Allow
-              Action:
-                # Allow the ECS Tasks to download images from ECR
-                - 'ecr:GetAuthorizationToken'
-                - 'ecr:BatchCheckLayerAvailability'
-                - 'ecr:GetDownloadUrlForLayer'
-                - 'ecr:BatchGetImage'
+  # ECSTaskExecutionRole:
+  #   Type: AWS::IAM::Role
+  #   Properties:
+  #     AssumeRolePolicyDocument:
+  #       Statement:
+  #       - Effect: Allow
+  #         Principal:
+  #           Service: [ecs-tasks.amazonaws.com]
+  #         Action: ['sts:AssumeRole']
+  #     Path: /
+  #     Policies:
+  #       - PolicyName: AmazonECSTaskExecutionRolePolicy
+  #         PolicyDocument:
+  #           Statement:
+  #           - Effect: Allow
+  #             Action:
+  #               # Allow the ECS Tasks to download images from ECR
+  #               - 'ecr:GetAuthorizationToken'
+  #               - 'ecr:BatchCheckLayerAvailability'
+  #               - 'ecr:GetDownloadUrlForLayer'
+  #               - 'ecr:BatchGetImage'
 
-                # Allow the ECS tasks to upload logs to CloudWatch
-                - 'logs:CreateLogStream'
-                - 'logs:PutLogEvents'
-              Resource: '*'
+  #               # Allow the ECS tasks to upload logs to CloudWatch
+  #               - 'logs:CreateLogStream'
+  #               - 'logs:PutLogEvents'
+  #             Resource: '*'
 
 
 #
@@ -312,12 +309,13 @@ Resources:
       NetworkMode: awsvpc
       RequiresCompatibilities:
         - FARGATE
-      ExecutionRoleArn: !Ref  'ECSTaskExecutionRole'     
+      #ExecutionRoleArn: !Ref  'ECSTaskExecutionRole'     
+      ExecutionRoleArn:
+        Fn::ImportValue:
+          !Join [':', [!Ref 'IamStackName', 'EcsServiceRole']]
       TaskRoleArn:
-        Fn::If:
-          - 'HasCustomRole'
-          - !Ref 'Role'
-          - !Ref "AWS::NoValue"
+        Fn::ImportValue:
+          !Join [':', [!Ref 'IamStackName', 'ECSTaskRole']]
       ContainerDefinitions:
         - Name: !Ref 'ServiceName'
           Cpu: !Ref 'ContainerCpu'
@@ -325,12 +323,12 @@ Resources:
           Image: !Ref 'ImageUrl'
           PortMappings:
             - ContainerPort: !Ref 'ContainerPort'
-        logConfiguration: 
-          logDriver: awslogs
-          options:
-            awslogs-group: /ecs/MythicalMysfits-Service
-            awslogs-region: us-east-1
-            awslogs-stream-prefix: ecs
+          LogConfiguration: 
+            LogDriver: awslogs
+            Options:
+              awslogs-group: /ecs/MythicalMysfits-Service
+              awslogs-region: us-east-1
+              awslogs-stream-prefix: ecs
         
   # The service. The service is a resource which allows you to run multiple
   # copies of a type of task, and gather up their logs and metrics, as well
@@ -407,16 +405,16 @@ Outputs:
     Value: !Join ['', ['http://', !GetAtt 'PublicLoadBalancer.DNSName']]
     Export:
       Name: !Join [ ':', [ !Ref 'AWS::StackName', 'ExternalUrl' ] ]
-  ECSRole:
-    Description: The ARN of the ECS role
-    Value: !GetAtt 'ECSRole.Arn'
-    Export:
-      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'ECSRole' ] ]
-  ECSTaskExecutionRole:
-    Description: The ARN of the ECS role
-    Value: !GetAtt 'ECSTaskExecutionRole.Arn'
-    Export:
-      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'ECSTaskExecutionRole' ] ]
+  # ECSRole:
+  #   Description: The ARN of the ECS role
+  #   Value: !GetAtt 'ECSRole.Arn'
+  #   Export:
+  #     Name: !Join [ ':', [ !Ref 'AWS::StackName', 'ECSRole' ] ]
+  # ECSTaskExecutionRole:
+  #   Description: The ARN of the ECS role
+  #   Value: !GetAtt 'ECSTaskExecutionRole.Arn'
+  #   Export:
+  #     Name: !Join [ ':', [ !Ref 'AWS::StackName', 'ECSTaskExecutionRole' ] ]
   PublicListener:
     Description: The ARN of the public load balancer's Listener
     Value: !Ref PublicLoadBalancerListener
